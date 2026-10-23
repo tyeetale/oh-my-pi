@@ -621,3 +621,57 @@ describe("composer mouse dispatch", () => {
 		expect(second.events).toEqual([]);
 	});
 });
+
+describe("composer editor click routing", () => {
+	beforeAll(() => {
+		initTheme();
+	});
+
+	function click(row: number, col: number) {
+		return { button: 0, col, row, release: false, wheel: null, motion: false, leftClick: true } as const;
+	}
+
+	/** The prompt mounted the way InteractiveMode mounts it: the editor alone inside a docked container. */
+	function mount(rows: number, hudRows: number) {
+		const term = new VirtualTerminal(80, 24);
+		const composer = new Composer({ terminal: term, preferences: { ...COMPOSER_DEFAULTS, quiet: true } });
+		composer.start();
+		const hud = new Container();
+		for (let index = 0; index < hudRows; index++) hud.addChild(new MouseTarget());
+		const slot = new Container();
+		slot.addChild(composer.editor);
+		composer.setRuntimeChildren([new TranscriptContainer(), hud, slot]);
+		composer.editor.setText("alpha\nbravo charlie");
+		const plain = composer.renderFrame({ columns: 80, rows }).viewport.map(line => Bun.stripANSI(line));
+		return { composer, plain };
+	}
+
+	it("moves the prompt caret when a click lands on its text, whatever chrome sits above", () => {
+		const { composer, plain } = mount(24, 3);
+		try {
+			const row = plain.findIndex(line => line.includes("bravo charlie"));
+			const col = plain[row]!.indexOf("charlie") + 2;
+			expect(composer.dispatchViewportMouse(click(row, col))).toBe("consumed");
+			expect(composer.editor.getCursor()).toEqual({ line: 1, col: 8 });
+
+			const first = plain.findIndex(line => line.includes("alpha"));
+			expect(composer.dispatchViewportMouse(click(first, plain[first]!.indexOf("alpha") + 1))).toBe("consumed");
+			expect(composer.editor.getCursor()).toEqual({ line: 0, col: 1 });
+		} finally {
+			composer.stop();
+		}
+	});
+
+	it("keeps the click-to-row mapping when a short viewport clips rows off the top", () => {
+		const { composer, plain } = mount(4, 30);
+		try {
+			expect(plain).toHaveLength(4);
+			const row = plain.findIndex(line => line.includes("alpha"));
+			expect(row).toBeGreaterThanOrEqual(0);
+			expect(composer.dispatchViewportMouse(click(row, plain[row]!.indexOf("alpha") + 3))).toBe("consumed");
+			expect(composer.editor.getCursor()).toEqual({ line: 0, col: 3 });
+		} finally {
+			composer.stop();
+		}
+	});
+});
