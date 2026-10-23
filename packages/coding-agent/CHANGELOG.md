@@ -630,6 +630,7 @@
 ### Fixed
 
 - Fixed `grep` on a single file showing in Tern as separate boxed snippets with no file row or syntax colors; it now looks the same as a `grep` over a directory
+- Inline widgets can handle left-clicks across the mutable viewport through `Component.handleMouse()`.
 
 ## [18.10.0] - 2026-10-12
 
