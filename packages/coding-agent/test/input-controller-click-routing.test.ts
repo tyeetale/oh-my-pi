@@ -15,8 +15,10 @@ const ESC = String.fromCharCode(27);
 // candidates below resolve it to the toggle sentinel.
 const EXPANDER_CLICK = `${ESC}[<0;5;3M`;
 
-function makeHarness() {
+function makeHarness(editorRow?: number) {
 	const listeners: Array<(data: string) => { consume?: boolean; data?: string } | undefined> = [];
+	const editorClicks: Array<[number, number]> = [];
+	let renders = 0;
 	const focused: string[] = [];
 	let toggled = 0;
 	const ctx = {
@@ -26,7 +28,9 @@ function makeHarness() {
 			},
 			getMutableViewport: () => ({ top: 0, length: 5 }),
 			hasOverlay: () => false,
-			requestRender: () => {},
+			requestRender: () => {
+				renders++;
+			},
 			addStartListener: () => {},
 			getFocused: () => undefined,
 		},
@@ -45,6 +49,10 @@ function makeHarness() {
 			extensionRunner: undefined,
 		},
 		resolveViewportClickCandidates: (index: number) => (index === 2 ? [PINNED_HUD_TOGGLE_ID] : []),
+		clickEditor: (row: number, col: number) => {
+			editorClicks.push([row, col]);
+			return row === editorRow;
+		},
 		focusedAgentId: undefined,
 		focusAgentSession: async (id: string) => {
 			focused.push(id);
@@ -61,6 +69,8 @@ function makeHarness() {
 		click: () => {
 			for (const listener of listeners) listener(EXPANDER_CLICK);
 		},
+		editorClicks,
+		renders: () => renders,
 		focused,
 		toggled: () => toggled,
 	};
@@ -97,5 +107,23 @@ describe("InputController click routing", () => {
 		h.click();
 		expect(h.toggled()).toBe(1);
 		expect(h.focused).toEqual([]);
+	});
+
+	it("sends a click on an editor text row to the editor instead of the agent targets", () => {
+		const h = makeHarness(2);
+		h.click();
+		// SGR column 5 (1-based) reaches the editor as 0-based column 4.
+		expect(h.editorClicks).toEqual([[2, 4]]);
+		expect(h.renders()).toBe(1);
+		expect(h.toggled()).toBe(0);
+		expect(h.focused).toEqual([]);
+	});
+
+	it("falls through to the agent targets when the click is not on an editor text row", () => {
+		const h = makeHarness(0);
+		h.click();
+		expect(h.editorClicks).toEqual([[2, 4]]);
+		expect(h.renders()).toBe(0);
+		expect(h.toggled()).toBe(1);
 	});
 });

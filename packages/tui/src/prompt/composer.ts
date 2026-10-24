@@ -260,6 +260,8 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 	#retiredHeaderRows: readonly string[] | undefined;
 	/** Click spans of the last `renderFrame` viewport, in viewport coordinates. */
 	#lastClickSpans: ViewportClickSpan[] = [];
+	/** Rows the prompt editor occupied in the last `renderFrame` viewport (half-open; `start` may be negative when its head was clipped). */
+	#editorSpan: { start: number; end: number } | undefined;
 	/** Click-candidate id under the pointer, painted with the hover band. Id-anchored so it follows streaming rows. */
 	#hoveredClickId: string | undefined;
 	// Hard-row prefix currently above the native viewport. The first resize
@@ -403,11 +405,18 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 		const transcriptIndex = roots.findIndex(root => root instanceof TranscriptContainer);
 		if (transcriptIndex < 0) {
 			this.#lastClickSpans = [];
+			this.#editorSpan = undefined;
 			const viewport: string[] = [];
+			let editorRows: { start: number; end: number } | undefined;
 			for (const root of roots) {
 				const rendered = root.render(width);
 				if (!this.#runtimeMounted && root === this.editor) this.#recordBootstrapEditorRows(rendered.length);
+				if (root === this.editor) editorRows = { start: viewport.length, end: viewport.length + rendered.length };
 				viewport.push(...rendered);
+			}
+			const clipped = Math.max(0, viewport.length - rows);
+			if (editorRows !== undefined) {
+				this.#editorSpan = { start: editorRows.start - clipped, end: editorRows.end - clipped };
 			}
 			return { viewport: viewport.slice(-rows) };
 		}
@@ -416,12 +425,13 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 		const afterRoots = roots.slice(transcriptIndex + 1);
 		const after: string[] = [];
 		const afterSpans: ViewportClickSpan[] = [];
+		let editorAfter: { start: number; end: number } | undefined;
 		const ends: { root: Component; end: number }[] = [];
 		let transientRows = 0;
 		let selfClearingRows = 0;
 		for (const root of afterRoots) {
 			const start = after.length;
-			this.#renderBelowRoot(root, width, after, afterSpans);
+			editorAfter = this.#renderBelowRoot(root, width, after, afterSpans) ?? editorAfter;
 			if (this.#selfClearingChrome.has(root)) selfClearingRows += after.length - start;
 			else if (this.#transientChrome.has(root)) transientRows += after.length - start;
 			ends.push({ root, end: after.length });
@@ -512,6 +522,11 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 		for (const span of activeSpans) shift(span, before.length - drop);
 		for (const span of afterSpans) shift(span, slack + before.length + active.length - drop);
 		this.#lastClickSpans = spans;
+		const editorBase = slack + before.length + active.length - drop;
+		this.#editorSpan =
+			editorAfter === undefined
+				? undefined
+				: { start: editorAfter.start + editorBase, end: editorAfter.end + editorBase };
 		if (history !== undefined && this.#offeredHistory?.source === "header") {
 			const visibleHeaderRows = Math.max(0, rows - (mutable.length + drop));
 			this.#retiredHeaderStart = Math.max(0, history.rows.length - visibleHeaderRows);
@@ -556,7 +571,9 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 
 	/**
 	 * Append one below-transcript root's rows to `after`, recording click spans
-	 * for its row targets in `after` coordinates.
+	 * for its row targets in `after` coordinates. Returns the rows `after`
+	 * received from the prompt editor when this root renders it directly or as
+	 * a direct child, so clicks on the input box can be routed to it.
 	 *
 	 * Row targets usually nest one level down: chrome roots are plain
 	 * containers (the HUD lives inside `subagentContainer`), and
@@ -567,17 +584,26 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 	 * custom render keep the composed output as the source of truth and measure
 	 * up to the last target.
 	 */
-	#renderBelowRoot(root: Component, width: number, after: string[], spans: ViewportClickSpan[]): void {
+	#renderBelowRoot(
+		root: Component,
+		width: number,
+		after: string[],
+		spans: ViewportClickSpan[],
+	): { start: number; end: number } | undefined {
 		const start = after.length;
 		const plainContainer = root instanceof Container && root.render === Container.prototype.render;
 		const targets = root instanceof Container ? root.children : [root];
 		const resolves = targets.map(rowTargetCandidates);
 		const lastTarget = resolves.findLastIndex(resolve => resolve !== undefined);
+		let editorRows: { start: number; end: number } | undefined;
 		if (plainContainer) {
 			let offset = start;
 			for (let index = 0; index < targets.length; index++) {
 				const childLines = targets[index]!.render(width);
 				after.push(...childLines);
+				if (targets[index] === this.#editor) {
+					editorRows = { start: after.length - childLines.length, end: after.length };
+				}
 				if (index > lastTarget) continue;
 				const resolve = resolves[index];
 				if (resolve !== undefined && childLines.length > 0) {
@@ -585,10 +611,11 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 				}
 				offset += childLines.length;
 			}
-			return;
+			return editorRows;
 		}
 		after.push(...root.render(width));
-		if (lastTarget === -1) return;
+		if (root === this.#editor) editorRows = { start, end: after.length };
+		if (lastTarget === -1) return editorRows;
 		let offset = start;
 		for (let index = 0; index <= lastTarget; index++) {
 			const childLines = targets[index] === root ? after.length - start : targets[index]!.render(width).length;
@@ -598,6 +625,7 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 			}
 			offset += childLines;
 		}
+		return editorRows;
 	}
 
 	/**
@@ -633,6 +661,18 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 	 */
 	viewportClickCandidates(index: number): string[] {
 		return routeViewportClick(this.#lastClickSpans, index);
+	}
+
+	/**
+	 * Move the prompt editor's caret to a click at a mutable-viewport row and
+	 * 0-based column. Returns false when the click is not on one of the
+	 * editor's text rows (other chrome, the transcript, or a swapped-in
+	 * prompt owner), so the caller can fall through to other click targets.
+	 */
+	clickEditor(viewportRow: number, col: number): boolean {
+		const span = this.#editorSpan;
+		if (span === undefined || viewportRow < span.start || viewportRow >= span.end) return false;
+		return this.#editor.clickAt(viewportRow - span.start, col);
 	}
 
 	/**

@@ -788,7 +788,7 @@ export class InputController {
 		const event = parseSgrMouse(data);
 		if (!event) return undefined;
 		if (event.motion) this.#updateHoverHighlight(event.row);
-		else if (event.leftClick) this.#focusClickedAgent(event.row);
+		else if (event.leftClick && !this.#clickEditor(event.row, event.col)) this.#focusClickedAgent(event.row);
 		return { consume: true };
 	}
 
@@ -813,6 +813,16 @@ export class InputController {
 		const local = screenRow - viewport.top;
 		if (viewport.length === 0 || local < 0 || local >= viewport.length) return [];
 		return this.ctx.resolveViewportClickCandidates(local);
+	}
+
+	/** Left-click on the prompt box: move its caret to the clicked cell. Returns true when the click was on an editor text row. */
+	#clickEditor(screenRow: number, col: number): boolean {
+		const viewport = this.ctx.ui.getMutableViewport();
+		const local = screenRow - viewport.top;
+		if (viewport.length === 0 || local < 0 || local >= viewport.length) return false;
+		if (!this.ctx.clickEditor(local, col)) return false;
+		this.ctx.ui.requestRender();
+		return true;
 	}
 
 	/**

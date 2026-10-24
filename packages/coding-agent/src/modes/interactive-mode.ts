@@ -1777,6 +1777,10 @@ export class InteractiveMode implements InteractiveModeContext {
 		return this.composer.viewportClickCandidates(index);
 	}
 
+	clickEditor(viewportRow: number, col: number): boolean {
+		return this.composer.clickEditor(viewportRow, col);
+	}
+
 	/** Flip the pinned jump list between its collapsed few and the full list, overriding the setting. */
 	togglePinnedHudExpanded(): void {
 		const mode = cfgDisplayPinnedAgents.get(settings);

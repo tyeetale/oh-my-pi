@@ -175,6 +175,8 @@ export interface InteractiveModeContext {
 	invalidatePendingFocus(): void;
 	/** Candidate subagent ids under a mutable-viewport line, for click-to-focus. Empty when the line has no target. */
 	resolveViewportClickCandidates(index: number): string[];
+	/** Move the prompt editor's caret to a click at a mutable-viewport row and column. False when the click is not on an editor text row. */
+	clickEditor(viewportRow: number, col: number): boolean;
 	/** Flip the pinned jump list between its collapsed few and the full list. */
 	togglePinnedHudExpanded(): void;
 	/** Point the inline hover band at a click-candidate id (or clear it). */

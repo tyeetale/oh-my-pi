@@ -665,6 +665,26 @@ export class Editor implements Component, Focusable {
 	#paddingXOverride: number | undefined;
 	#maxHeight?: number;
 	#scrollOffset: number = 0;
+	/**
+	 * Where the last `render()` painted text, for pointer hit-testing ({@link clickAt}).
+	 * `rows` is the frame's own output and `texts[i]` the text handed to the composer style for
+	 * visible layout row `i`, so a click finds the cells before the text by measuring the painted
+	 * row itself: styles disagree about left chrome (box's merged bottom border, a padded
+	 * `claude` row), and extension styles are free to paint anything. `topRows` is the chrome
+	 * above the first text row; `fallbackLeft` (side chrome plus prompt gutter) covers a row
+	 * whose style did not carry the text through verbatim.
+	 */
+	#paintGeometry:
+		| {
+				layoutLines: readonly LayoutLine[];
+				scrollOffset: number;
+				visibleRows: number;
+				topRows: number;
+				fallbackLeft: number;
+				rows: readonly string[];
+				texts: readonly (string | undefined)[];
+		  }
+		| undefined;
 	/** When true, the right border shows a scrollbar track/thumb when content
 	 *  overflows {@link #maxHeight}. Enabled by {@link HookEditorComponent} and
 	 *  other multi-line consumers; single-line consumers are unaffected. */
@@ -1403,6 +1423,16 @@ export class Editor implements Component, Focusable {
 
 		const topRow = style.renderTop(chromeCtx);
 		if (topRow !== undefined) result.push(topRow);
+		const paintedTexts: (string | undefined)[] = [];
+		this.#paintGeometry = {
+			layoutLines,
+			scrollOffset: this.#scrollOffset,
+			visibleRows: visibleLayoutLines.length,
+			topRows: topRow !== undefined ? 1 : 0,
+			fallbackLeft: borderWidth + (promptGutter?.width ?? 0),
+			rows: result,
+			texts: paintedTexts,
+		};
 
 		// Render each layout line
 		// Keep the hardware cursor at the text insertion point while autocomplete
@@ -1614,6 +1644,7 @@ export class Editor implements Component, Focusable {
 				? displayText
 				: (this.#theme.textColor ?? PASSTHROUGH_COLOR)(displayText);
 
+			paintedTexts[visibleIndex] = renderedText;
 			const linePad = padding(Math.max(0, lineContentWidth - displayWidth));
 
 			result.push(
@@ -2945,6 +2976,46 @@ export class Editor implements Component, Focusable {
 
 	getCursor(): { line: number; col: number } {
 		return { line: this.#state.cursorLine, col: this.#state.cursorCol };
+	}
+
+	/**
+	 * Place the caret from a pointer click. `row` is 0-based within this component's last render
+	 * and `col` is the screen column, which equals the component column because the editor spans
+	 * the full terminal width.
+	 *
+	 * Returns true when the click landed on a text row. A click left or right of the text snaps
+	 * to the row's first or last caret position; one on the top or bottom chrome or the
+	 * autocomplete list returns false and leaves the caret alone. Like the arrow keys, a click
+	 * moves the caret without leaving history browsing.
+	 */
+	clickAt(row: number, col: number): boolean {
+		const geometry = this.#paintGeometry;
+		if (geometry === undefined) return false;
+		const visibleIndex = row - geometry.topRows;
+		if (!Number.isInteger(visibleIndex) || visibleIndex < 0 || visibleIndex >= geometry.visibleRows) return false;
+		const layoutIndex = geometry.scrollOffset + visibleIndex;
+		const layout = geometry.layoutLines[layoutIndex];
+		// The frame may predate an edit that landed before this click; never index past the buffer.
+		if (layout === undefined || layout.sourceLine >= this.#state.lines.length) return false;
+		const isLastSegment = geometry.layoutLines[layoutIndex + 1]?.sourceLine !== layout.sourceLine;
+		// Cells before the text: measured off the painted row when the style carried the text
+		// through verbatim (an empty row needs no offset: every column snaps to its start).
+		const paintedRow = geometry.rows[geometry.topRows + visibleIndex];
+		const painted = geometry.texts[visibleIndex];
+		const textAt = paintedRow !== undefined && painted ? paintedRow.indexOf(painted) : -1;
+		const textLeft = textAt >= 0 ? visibleWidth(paintedRow!.slice(0, textAt)) : geometry.fallbackLeft;
+		const visualCol = Math.min(Math.max(0, col - textLeft), maxSegmentVisualCol(layout.text, isLastSegment));
+		const source = this.#state.lines[layout.sourceLine] ?? "";
+		const target = Math.min(layout.sourceStartCol + offsetAtVisualCol(layout.text, visualCol), source.length);
+		this.#resetKillSequence();
+		this.#state.cursorLine = layout.sourceLine;
+		this.#setCursorCol(target);
+		this.#clampVimCursor();
+		if (this.#autocompleteState) {
+			this.#cancelAutocomplete();
+			this.onAutocompleteUpdate?.();
+		}
+		return true;
 	}
 
 	moveToLineStart(): void {

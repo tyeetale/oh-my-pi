@@ -220,3 +220,72 @@ describe("composer chrome span recording", () => {
 		}
 	});
 });
+
+describe("composer editor click routing", () => {
+	beforeAll(() => {
+		initTheme();
+	});
+
+	function mount(rows: number, preamble: number) {
+		const term = new VirtualTerminal(80, 24);
+		const composer = new Composer({ terminal: term, preferences: { ...COMPOSER_DEFAULTS, quiet: true } });
+		composer.start();
+		const transcript = new TranscriptContainer();
+		const slot = new Container();
+		slot.addChild(composer.editor);
+		const chrome = new Container();
+		chrome.addChild(
+			new RowTarget(
+				Array.from({ length: preamble }, (_, index) => `hud ${index}`),
+				[],
+			),
+		);
+		composer.setRuntimeChildren([transcript, chrome, slot]);
+		composer.editor.setText("alpha\nbravo charlie");
+		const frame = composer.renderFrame({ columns: 80, rows });
+		const plain = frame.viewport.map(line => Bun.stripANSI(line));
+		return { composer, plain };
+	}
+
+	it("routes a click on the editor's text row to the caret, whatever chrome sits above", () => {
+		const { composer, plain } = mount(24, 3);
+		try {
+			const row = plain.findIndex(line => line.includes("bravo charlie"));
+			const col = plain[row]!.indexOf("charlie");
+			expect(composer.clickEditor(row, col + 2)).toBe(true);
+			expect(composer.editor.getCursor()).toEqual({ line: 1, col: 8 });
+			const first = plain.findIndex(line => line.includes("alpha"));
+			expect(composer.clickEditor(first, plain[first]!.indexOf("alpha") + 1)).toBe(true);
+			expect(composer.editor.getCursor()).toEqual({ line: 0, col: 1 });
+		} finally {
+			composer.stop();
+		}
+	});
+
+	it("misses the HUD rows above the editor and rows outside the viewport", () => {
+		const { composer, plain } = mount(24, 3);
+		try {
+			const hud = plain.findIndex(line => line.includes("hud 1"));
+			const before = composer.editor.getCursor();
+			expect(composer.clickEditor(hud, 2)).toBe(false);
+			expect(composer.clickEditor(-1, 2)).toBe(false);
+			expect(composer.clickEditor(500, 2)).toBe(false);
+			expect(composer.editor.getCursor()).toEqual(before);
+		} finally {
+			composer.stop();
+		}
+	});
+
+	it("keeps the editor row mapping when a short viewport clips rows off the top", () => {
+		const { composer, plain } = mount(4, 30);
+		try {
+			expect(plain).toHaveLength(4);
+			const row = plain.findIndex(line => line.includes("alpha"));
+			expect(row).toBeGreaterThanOrEqual(0);
+			expect(composer.clickEditor(row, plain[row]!.indexOf("alpha") + 3)).toBe(true);
+			expect(composer.editor.getCursor()).toEqual({ line: 0, col: 3 });
+		} finally {
+			composer.stop();
+		}
+	});
+});
