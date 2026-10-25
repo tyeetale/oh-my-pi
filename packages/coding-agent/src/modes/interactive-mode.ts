@@ -2004,6 +2004,8 @@ export class InteractiveMode implements InteractiveModeContext {
 				// the same card would look unchanged and skip restoring the band.
 				if (!on) {
 					this.composer.setHoveredClickId(undefined);
+					// With reporting off nothing can move or clear a highlight any more.
+					this.composer.setViewportSelection(undefined);
 					this.#inputController?.clearHoverHighlight();
 				}
 				this.ui.requestRender();

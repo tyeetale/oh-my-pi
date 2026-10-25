@@ -894,13 +894,15 @@ export class InputController {
 	}
 
 	/**
-	 * Forget the last hovered target without repainting. Disabling mouse
-	 * capture clears the composer's band, but with reporting off no motion
-	 * event will ever refresh this cache — so a re-enable plus motion over
-	 * the same card would look unchanged and skip restoring the band.
+	 * Forget the last hovered target and any half-finished click or drag, without repainting. Disabling
+	 * mouse capture clears the composer's band, but with reporting off no motion event will ever refresh
+	 * this cache — so a re-enable plus motion over the same card would look unchanged and skip restoring
+	 * the band, and a press seen just before the release would otherwise complete a gesture later.
 	 */
 	clearHoverHighlight(): void {
 		this.#lastHoverClickId = undefined;
+		this.#pointerPress = undefined;
+		this.#pointerDragging = false;
 	}
 
 	#focusClickedAgent(screenRow: number): void {

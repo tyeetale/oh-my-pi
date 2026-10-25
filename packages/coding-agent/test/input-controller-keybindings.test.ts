@@ -250,6 +250,7 @@ async function createContext() {
 		handleBtwFollowUpKey,
 		showError,
 		showStatus: vi.fn(),
+		hasViewportSelection: () => false,
 		isGuidedGoalInterviewActive,
 	} as unknown as InteractiveModeContext;
 

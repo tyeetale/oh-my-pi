@@ -1,4 +1,5 @@
 import { clearSubmittedText } from "./helpers/draft";
+import { cfgTuiMouse } from "../modes/settings";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { journalJudgmentUsage, resolveJudge, sharedJudgmentCache } from "../judgment";
 import type { AgentSession } from "../session/agent-session";
@@ -539,6 +540,38 @@ export const BUILTIN_SESSION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: (_command, runtime) => {
 			runtime.ctx.handleToolsCommand();
 			clearSubmittedText(runtime);
+		},
+	},
+	{
+		name: "mouse",
+		description:
+			"Turn mouse capture on or off for this session: click and drag in omp, or scroll and select with the terminal",
+		allowArgs: true,
+		subcommands: [
+			{ name: "on", description: "Capture the mouse: click the prompt, drag to select and copy" },
+			{ name: "off", description: "Release the mouse: the terminal scrolls and selects natively" },
+		],
+		subcommandOptional: true,
+		inlineHint: "[on|off]",
+		getTuiAutocompleteDescription: runtime =>
+			cfgTuiMouse.get(runtime.ctx.settings)
+				? "Mouse: captured (click, drag-select; terminal scroll off)"
+				: "Mouse: released (terminal scroll and select)",
+		handleTui: (command, runtime) => {
+			clearSubmittedText(runtime);
+			const arg = command.args.trim().toLowerCase();
+			if (arg !== "" && arg !== "on" && arg !== "off") {
+				runtime.ctx.showWarning("Usage: /mouse [on|off]");
+				return;
+			}
+			const next = arg === "" ? !cfgTuiMouse.get(runtime.ctx.settings) : arg === "on";
+			// Runtime-only: the saved `tui.mouse` is untouched, so the next launch starts as configured.
+			cfgTuiMouse.override(runtime.ctx.settings, next);
+			runtime.ctx.showStatus(
+				next
+					? "Mouse captured: click the prompt, drag to select and copy. /mouse off to scroll."
+					: "Mouse released: the terminal scrolls and selects. /mouse on to click and drag.",
+			);
 		},
 	},
 	{
