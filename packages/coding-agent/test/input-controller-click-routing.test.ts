@@ -9,7 +9,7 @@ import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import * as clipboard from "@oh-my-pi/pi-coding-agent/utils/clipboard";
 
-import { cfgTuiMouse } from "@oh-my-pi/pi-coding-agent/modes/settings";
+import { cfgTuiMouse, cfgTuiMouseSmart } from "@oh-my-pi/pi-coding-agent/modes/settings";
 
 const ESC = String.fromCharCode(27);
 
@@ -34,6 +34,8 @@ function makeHarness() {
 	let toggled = 0;
 	let renders = 0;
 	let pins = 0;
+	let releases = 0;
+	let resumes = 0;
 	let mouseDispatch: "none" | "delivered" | "consumed" = "none";
 	let selection: Selection | undefined;
 	let selectionText = "";
@@ -93,6 +95,12 @@ function makeHarness() {
 		pinViewportSelection: () => {
 			pins++;
 		},
+		releaseMouseForScroll: () => {
+			releases++;
+		},
+		endMouseScrollRelease: () => {
+			resumes++;
+		},
 	} as unknown as InteractiveModeContext;
 	const controller = new InputController(ctx);
 	controller.setupKeyHandlers();
@@ -116,6 +124,8 @@ function makeHarness() {
 		toggled: () => toggled,
 		renders: () => renders,
 		pins: () => pins,
+		releases: () => releases,
+		resumes: () => resumes,
 		selection: () => selection,
 		setSelectionText: (text: string) => {
 			selectionText = text;
@@ -242,6 +252,47 @@ describe("InputController click and drag gestures", () => {
 		expect(h.selection()).toBeUndefined();
 	});
 
+	describe("smart capture", () => {
+		it("lets go of the mouse when the wheel moves, so the terminal can scroll", () => {
+			cfgTuiMouseSmart.override(settings, true);
+			const h = makeHarness();
+			h.send(sgr(64, { row: 2, col: 4 })); // wheel up
+			h.send(sgr(65, { row: 2, col: 4 })); // wheel down
+			expect(h.releases()).toBe(2);
+		});
+
+		it("abandons a half-made click or drag when the wheel moves", () => {
+			cfgTuiMouseSmart.override(settings, true);
+			const h = makeHarness();
+			h.press({ row: 3, col: 7 });
+			h.send(sgr(64, { row: 3, col: 7 }));
+			h.release({ row: 3, col: 7 });
+			expect(h.dispatched).toEqual([]);
+			expect(h.toggled()).toBe(0);
+		});
+
+		it("only swallows the wheel without smart capture, since nothing can scroll for the user", () => {
+			cfgTuiMouseSmart.override(settings, false);
+			const h = makeHarness();
+			expect(h.send(sgr(64, { row: 2, col: 4 }))).toContainEqual({ consume: true });
+			expect(h.releases()).toBe(0);
+		});
+
+		it("takes the mouse back on a key press, and still hands the key to the editor", () => {
+			const h = makeHarness();
+			// Nothing consumes the key, so the editor still gets it.
+			expect(h.send("a")).not.toContainEqual({ consume: true });
+			expect(h.resumes()).toBe(1);
+		});
+
+		it("does not treat a click as a reason to release the mouse", () => {
+			cfgTuiMouseSmart.override(settings, true);
+			const h = makeHarness();
+			h.click();
+			expect(h.releases()).toBe(0);
+		});
+	});
+
 	it("keeps the highlight after the drag and clears it on the next press", () => {
 		vi.spyOn(clipboard, "copyToClipboard").mockResolvedValue(undefined);
 		const h = makeHarness();
@@ -262,8 +313,8 @@ describe("InputController click and drag gestures", () => {
 		h.drag({ row: 1, col: 5 });
 		h.release({ row: 1, col: 5 });
 		expect(h.selection()).toBeDefined();
-		// An undefined result means the listener did not consume the key: the editor still gets it.
-		expect(h.send("a")).toEqual([undefined]);
+		// Nothing consumes the key: the editor still gets it.
+		expect(h.send("a")).not.toContainEqual({ consume: true });
 		expect(h.selection()).toBeUndefined();
 	});
 

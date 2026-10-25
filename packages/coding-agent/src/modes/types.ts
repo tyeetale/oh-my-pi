@@ -189,6 +189,10 @@ export interface InteractiveModeContext {
 	viewportSelectionText(): string;
 	/** Keep the highlight only while the rows under it still read as they did when the drag ended. */
 	pinViewportSelection(): void;
+	/** Let go of the mouse so the terminal scrolls: smart capture's answer to the wheel. Reporting returns after a short while. */
+	releaseMouseForScroll(): void;
+	/** Take the mouse back right away, ending a wheel release (a key press does this). */
+	endMouseScrollRelease(): void;
 	/** Flip the pinned jump list between its collapsed few and the full list. */
 	togglePinnedHudExpanded(): void;
 	/** Point the inline hover band at a click-candidate id (or clear it). */

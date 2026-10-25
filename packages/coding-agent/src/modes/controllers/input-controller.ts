@@ -85,6 +85,7 @@ import {
 	cfgImagesAutoResize,
 	cfgPasteLargeMenuThreshold,
 	cfgTuiMouse,
+	cfgTuiMouseSmart,
 } from "../settings";
 import { cfgHideThinkingBlock } from "../../session/settings";
 
@@ -796,13 +797,23 @@ export class InputController {
 	#handleInlineMouse(data: string): { consume?: boolean; data?: string } | undefined {
 		if (!data.startsWith("\x1b[<")) {
 			this.#clearSelection();
+			this.ctx.endMouseScrollRelease();
 			return undefined;
 		}
 		if (!cfgTuiMouse.get(this.ctx.settings)) return undefined;
 		if (this.ctx.ui.hasOverlay()) return undefined;
 		const event = parseSgrMouse(data);
 		if (!event) return undefined;
-		if (event.wheel !== null) return { consume: true };
+		if (event.wheel !== null) {
+			// The terminal can only scroll what it is not reporting. Smart capture lets go; the plain policy has no
+			// way to scroll for the user and just swallows the wheel.
+			if (cfgTuiMouseSmart.get(this.ctx.settings)) {
+				this.#pointerPress = undefined;
+				this.#pointerDragging = false;
+				this.ctx.releaseMouseForScroll();
+			}
+			return { consume: true };
+		}
 		const cell = { row: event.row, col: event.col };
 		const leftButton = (event.button & 3) === 0;
 		if (event.leftClick) {

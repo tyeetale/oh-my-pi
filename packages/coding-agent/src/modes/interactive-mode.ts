@@ -291,6 +291,7 @@ import { LiveCommandController } from "./controllers/live-command-controller";
 import { MCPCommandController } from "./controllers/mcp-command-controller";
 import { OmfgController } from "./controllers/omfg-controller";
 import { SelectorController } from "./controllers/selector-controller";
+import { shouldCaptureMouse, WHEEL_RELEASE_MS } from "./mouse-capture";
 import { SessionFocusController } from "./controllers/session-focus-controller";
 import { SSHCommandController } from "./controllers/ssh-command-controller";
 import { TanCommandController } from "./controllers/tan-command-controller";
@@ -396,6 +397,7 @@ import {
 	cfgTuiMaxInlineImages,
 	cfgTuiAutoGraph,
 	cfgTuiMouse,
+	cfgTuiMouseSmart,
 	cfgTuiRenderMermaid,
 	cfgTuiRenderSvg,
 	cfgTuiResizeScrollback,
@@ -1814,6 +1816,30 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.composer.pinViewportSelection();
 	}
 
+	releaseMouseForScroll(): void {
+		this.#wheelReleaseUntil = Date.now() + WHEEL_RELEASE_MS;
+		// Reporting is about to stop: whatever the pointer was doing can no longer finish.
+		this.composer.setHoveredClickId(undefined);
+		this.composer.setViewportSelection(undefined);
+		this.#inputController?.clearHoverHighlight();
+		clearTimeout(this.#wheelReleaseTimer);
+		// Reporting off means no input will arrive to end the release, so a timer repaints when it lapses.
+		this.#wheelReleaseTimer = setTimeout(() => {
+			this.#wheelReleaseTimer = undefined;
+			this.ui.requestRender();
+		}, WHEEL_RELEASE_MS);
+		this.#wheelReleaseTimer.unref?.();
+		this.ui.requestRender();
+	}
+
+	endMouseScrollRelease(): void {
+		if (this.#wheelReleaseUntil === 0) return;
+		this.#wheelReleaseUntil = 0;
+		clearTimeout(this.#wheelReleaseTimer);
+		this.#wheelReleaseTimer = undefined;
+		this.ui.requestRender();
+	}
+
 	/** Flip the pinned jump list between its collapsed few and the full list, overriding the setting. */
 	togglePinnedHudExpanded(): void {
 		const mode = cfgDisplayPinnedAgents.get(settings);
@@ -1879,6 +1905,11 @@ export class InteractiveMode implements InteractiveModeContext {
 	#eventBusUnsubscribers: Array<() => void> = [];
 	/** Mirror of `tui.mouse`, read by the TUI's per-frame inline mouse tracking probe. */
 	#mouseCapture = false;
+	/** Mirror of `tui.mouseSmart`: capture follows the prompt draft and yields to the wheel. */
+	#mouseSmart = false;
+	/** Epoch milliseconds until which a wheel release keeps mouse reporting off; 0 when none is active. */
+	#wheelReleaseUntil = 0;
+	#wheelReleaseTimer?: NodeJS.Timeout;
 	#observerUiSyncTimer?: NodeJS.Timeout;
 	/** Repaints the subagent HUD so live-preview elapsed markers advance between progress events. */
 	#subagentPreviewTickTimer?: NodeJS.Timeout;
@@ -1995,7 +2026,12 @@ export class InteractiveMode implements InteractiveModeContext {
 		// subscription rather than resolving the setting per render.
 		// Session settings overlay the global layer and forward its changes.
 		this.#mouseCapture = cfgTuiMouse.get(this.settings);
+		this.#mouseSmart = cfgTuiMouseSmart.get(this.settings);
 		this.#eventBusUnsubscribers.push(
+			cfgTuiMouseSmart.listen(this.settings, on => {
+				this.#mouseSmart = on;
+				this.ui.requestRender();
+			}),
 			cfgTuiMouse.listen(this.settings, on => {
 				this.#mouseCapture = on;
 				// Dropping capture must also drop the band: with reporting off no
@@ -2011,7 +2047,15 @@ export class InteractiveMode implements InteractiveModeContext {
 				this.ui.requestRender();
 			}),
 		);
-		this.ui.setInlineMouseTrackingProvider(() => this.#mouseCapture);
+		this.ui.setInlineMouseTrackingProvider(() =>
+			shouldCaptureMouse({
+				enabled: this.#mouseCapture,
+				smart: this.#mouseSmart,
+				hasDraft: !this.composer.editor.textEquals(""),
+				wheelReleaseUntil: this.#wheelReleaseUntil,
+				now: Date.now(),
+			}),
+		);
 		this.chatContainer = new TranscriptContainer();
 		this.pendingMessagesContainer = new AnchoredLiveContainer();
 		this.progressHudContainer = new AnchoredLiveContainer();
@@ -7291,6 +7335,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		setCfgApprovalHost(null);
 		this.#disposeImageBlobWriter?.();
 		this.#disposeImageBlobWriter = undefined;
+		clearTimeout(this.#wheelReleaseTimer);
+		this.#wheelReleaseTimer = undefined;
 		this.#hideSessionInfo();
 		if (this.#ownsStartedUi) {
 			this.ui.stop();

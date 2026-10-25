@@ -251,6 +251,7 @@ async function createContext() {
 		showError,
 		showStatus: vi.fn(),
 		hasViewportSelection: () => false,
+		endMouseScrollRelease: vi.fn(),
 		isGuidedGoalInterviewActive,
 	} as unknown as InteractiveModeContext;
 

@@ -584,6 +584,19 @@ export const cfgTuiMouse = register({
 	},
 });
 
+export const cfgTuiMouseSmart = register({
+	id: "tui.mouseSmart",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "appearance",
+		group: "Display",
+		label: "Smart Mouse Capture",
+		description:
+			"With Mouse Click-to-Focus on, capture the mouse only while the prompt has text, and let go for a moment whenever the wheel moves so the terminal always scrolls and selects natively otherwise",
+	},
+});
+
 export const cfgTuiTight = register({
 	id: "tui.tight",
 	type: "boolean",
