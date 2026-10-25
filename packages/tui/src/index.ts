@@ -58,6 +58,8 @@ export * from "./latex-block";
 export * from "./latex-to-unicode";
 // SGR mouse report parsing
 export * from "./mouse";
+// Drag selection over the mutable viewport
+export * from "./text-selection";
 // Tern Surface Protocol: describe contract, builders, blobs, settling, render state
 export * from "./native/blobs";
 export * from "./native/describe";

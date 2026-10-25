@@ -5,9 +5,11 @@ import {
 	type AutocompleteProvider,
 	type Component,
 	emergencyTerminalRestore,
+	isSameCell,
 	matchesKey,
 	parseSgrMouse,
 	type PasteOptions,
+	type SgrMouseEvent,
 	type SlashCommand,
 } from "@oh-my-pi/pi-tui";
 import { isEnoent, logger, postmortem, sanitizeText } from "@oh-my-pi/pi-utils";
@@ -290,6 +292,10 @@ export class InputController {
 	#globalEditorActionsListenerInstalled = false;
 	#expandToolsListenerInstalled = false;
 	#inlineMouseListenerInstalled = false;
+	/** Cell where the left button went down and has not yet come up; the gesture it starts is decided on release. */
+	#pointerPress: { row: number; col: number } | undefined;
+	/** True once the pointer left the press cell with the button held: the gesture is a selection, not a click. */
+	#pointerDragging = false;
 
 	/** Click-candidate id the hover band currently tracks; repaint only on change. */
 	#lastHoverClickId: string | undefined;
@@ -775,26 +781,93 @@ export class InputController {
 	}
 
 	/**
-	 * Inline click-to-focus (`tui.mouse`): left-clicks on live subagent cards
-	 * and HUD rows focus that agent in one action, and pointer motion lights up
-	 * the hover band on the target under the cursor. Every SGR report is consumed
-	 * while inline tracking owns the terminal so button/wheel bytes never reach
-	 * the editor as typed input; clicks on chrome simply swallow.
+	 * Inline mouse gestures (`tui.mouse`), told apart by what the button does after it goes down:
+	 *
+	 * - released in the same cell: a click. It lands on the widget under the pointer (the prompt moves
+	 *   its caret, a subagent card or HUD row takes focus);
+	 * - the pointer moves to another cell first: a drag. It highlights the rows between the two cells,
+	 *   copies them on release, and never moves the caret or focuses anything.
+	 *
+	 * Motion without a button lights up the hover band on the target under the pointer. Every SGR report
+	 * is consumed while inline tracking owns the terminal so button and wheel bytes never reach the
+	 * editor as typed input; the wheel has no in-app meaning here and is swallowed. A key press ends a
+	 * highlighted selection and still reaches the editor.
 	 */
 	#handleInlineMouse(data: string): { consume?: boolean; data?: string } | undefined {
-		if (!data.startsWith("\x1b[<")) return undefined;
+		if (!data.startsWith("\x1b[<")) {
+			this.#clearSelection();
+			return undefined;
+		}
 		if (!cfgTuiMouse.get(this.ctx.settings)) return undefined;
 		if (this.ctx.ui.hasOverlay()) return undefined;
 		const event = parseSgrMouse(data);
 		if (!event) return undefined;
+		if (event.wheel !== null) return { consume: true };
+		const cell = { row: event.row, col: event.col };
+		const leftButton = (event.button & 3) === 0;
 		if (event.leftClick) {
-			const dispatch = this.ctx.dispatchViewportMouse(event);
-			if (dispatch !== "none") this.ctx.ui.requestRender();
-			if (dispatch === "consumed") return { consume: true };
+			this.#clearSelection();
+			this.#pointerPress = cell;
+			this.#pointerDragging = false;
+			return { consume: true };
 		}
-		if (event.motion) this.#updateHoverHighlight(event.row);
-		else if (event.leftClick) this.#focusClickedAgent(event.row);
+		const press = this.#pointerPress;
+		if (event.motion && leftButton && press !== undefined) {
+			if (this.#pointerDragging || !isSameCell(press, cell)) {
+				this.#pointerDragging = true;
+				this.ctx.setScreenSelection({ anchor: press, head: cell });
+				this.ctx.ui.requestRender();
+			}
+			return { consume: true };
+		}
+		if (event.release && leftButton && press !== undefined) {
+			this.#pointerPress = undefined;
+			const dragged = this.#pointerDragging || !isSameCell(press, cell);
+			this.#pointerDragging = false;
+			if (dragged) {
+				this.ctx.setScreenSelection({ anchor: press, head: cell });
+				this.#finishSelection();
+			} else {
+				this.#clickAt(event, press);
+			}
+			return { consume: true };
+		}
+		if (event.motion && press === undefined) this.#updateHoverHighlight(event.row);
 		return { consume: true };
+	}
+
+	/** Deliver a click at the press cell: the widget under it handles it, else a subagent card takes focus. */
+	#clickAt(event: SgrMouseEvent, cell: { row: number; col: number }): void {
+		const click: SgrMouseEvent = { ...event, ...cell, button: 0, release: false, motion: false, leftClick: true };
+		const dispatch = this.ctx.dispatchViewportMouse(click);
+		if (dispatch !== "none") this.ctx.ui.requestRender();
+		if (dispatch === "consumed") return;
+		this.#focusClickedAgent(click.row);
+	}
+
+	/**
+	 * Copy what the drag highlighted and keep the highlight as the confirmation. A "Copied" notice would
+	 * add a row and push the prompt up under the highlight, so success is silent; failure warns. An empty
+	 * result (blank rows) drops the highlight instead.
+	 */
+	#finishSelection(): void {
+		const text = this.ctx.viewportSelectionText();
+		if (text.length === 0) {
+			this.#clearSelection();
+			return;
+		}
+		this.ctx.pinViewportSelection();
+		this.ctx.ui.requestRender();
+		copyToClipboard(text).catch((error: unknown) => {
+			logger.warn("Selection copy failed", { error: String(error) });
+			this.ctx.showWarning("Failed to copy selection to clipboard");
+		});
+	}
+
+	#clearSelection(): void {
+		if (!this.ctx.hasViewportSelection()) return;
+		this.ctx.setScreenSelection(undefined);
+		this.ctx.ui.requestRender();
 	}
 
 	/**

@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
@@ -14,6 +14,7 @@ import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
 import { TASK_SUBAGENT_LIFECYCLE_CHANNEL } from "@oh-my-pi/pi-coding-agent/task";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { TempDir } from "@oh-my-pi/pi-utils";
+import * as clipboard from "@oh-my-pi/pi-coding-agent/utils/clipboard";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal";
 
 import { cfgTuiMouse } from "@oh-my-pi/pi-coding-agent/modes/settings";
@@ -250,7 +251,9 @@ describe("inline click-to-focus geometry", () => {
 			const viewport = plainRows(term.getViewport());
 			const screenRow = viewport.findIndex(row => row.includes(marker));
 			expect(screenRow).toBeGreaterThanOrEqual(0);
+			// A click is a press and a release in the same cell.
 			term.sendInput(`\x1b[<0;5;${screenRow + 1}M`);
+			term.sendInput(`\x1b[<0;5;${screenRow + 1}m`);
 		};
 
 		// Collapsed by default: three rows plus the expander.
@@ -265,5 +268,49 @@ describe("inline click-to-focus geometry", () => {
 		await clickRow("show less");
 		await term.waitForRender(() => plainRows(term.getViewport()).some(row => row.includes("more — expand")));
 		expect(plainRows(term.getViewport()).some(row => row.includes("ToggleAgent3"))).toBe(false);
+	});
+
+	it("highlights and copies a drag over the painted prompt without moving its caret", async () => {
+		const copied: string[] = [];
+		const spy = vi.spyOn(clipboard, "copyToClipboard").mockImplementation(async text => {
+			copied.push(text);
+		});
+		try {
+			await mode.init({ suppressWelcomeIntro: true });
+			void mode.getUserInput();
+			await term.waitForRender();
+			cfgTuiMouse.set(mode.settings, true);
+			mode.editor.setText("hello world\nsecond line here");
+			mode.ui.requestRender();
+			await term.waitForRender(() => plainRows(term.getViewport()).some(row => row.includes("second line here")));
+
+			const rows = plainRows(term.getViewport());
+			const row = rows.findIndex(line => line.includes("second line here"));
+			const col = rows[row]!.indexOf("line");
+			const caretBefore = mode.editor.getCursor();
+
+			// Press on "line", drag right across "line here", release.
+			term.sendInput(`\x1b[<0;${col + 1};${row + 1}M`);
+			term.sendInput(`\x1b[<32;${col + 5};${row + 1}M`);
+			term.sendInput(`\x1b[<32;${col + 9};${row + 1}M`);
+			term.sendInput(`\x1b[<0;${col + 9};${row + 1}m`);
+			await term.waitForRender(() => mode.hasViewportSelection());
+
+			expect(copied).toEqual(["line here"]);
+			expect(mode.editor.getCursor()).toEqual(caretBefore);
+			// The highlight and the "Copied" notice must not have shifted the rows under it.
+			await term.waitForRender();
+			expect(mode.viewportSelectionText()).toBe("line here");
+			const after = plainRows(term.getViewport());
+			expect(after[row]).toContain("second line here");
+
+			// Typing ends the highlight, and the key still reaches the editor.
+			term.sendInput("x");
+			await term.waitForRender(() => !mode.hasViewportSelection());
+			expect(mode.hasViewportSelection()).toBe(false);
+			expect(mode.editor.getText()).toContain("x");
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

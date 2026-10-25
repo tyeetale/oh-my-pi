@@ -17,6 +17,7 @@ import {
 	type ViewportSize,
 } from "../tui";
 import type { SgrMouseEvent } from "../mouse";
+import { highlightSelection, selectionText, type ViewportSelection } from "../text-selection";
 import { wrapLiteralLine } from "../utils";
 import type { NativeChild, NativeSurface, NativeSurfaceProvider } from "../native/node";
 import { sameItems } from "../native/memo";
@@ -271,6 +272,16 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 	#lastClickSpans: ViewportClickSpan[] = [];
 	/** Click-candidate id under the pointer, painted with the hover band. Id-anchored so it follows streaming rows. */
 	#hoveredClickId: string | undefined;
+	/** Drag selection in mutable-viewport coordinates, painted over the viewport copy only. */
+	#selection: ViewportSelection | undefined;
+	/** Viewport rows of the last frame as composed (no hover band, no selection), the source of the selected text. */
+	#lastViewportRows: readonly string[] = [];
+	/**
+	 * Text the finished selection copied. While set, a frame whose rows under the selection read
+	 * differently (output streamed in, a notice moved the prompt) drops the selection: a highlight
+	 * that now covers other text would be a lie, and rows have no identity to follow.
+	 */
+	#pinnedSelectionText: string | undefined;
 	// Hard-row prefix currently above the native viewport. The first resize
 	// frame may pull part of it down before the normal buffer is borrowed.
 	#retiredHeaderStart = 0;
@@ -540,7 +551,20 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 			const visibleHeaderRows = Math.max(0, rows - (mutable.length + drop));
 			this.#retiredHeaderStart = Math.max(0, history.rows.length - visibleHeaderRows);
 		}
-		return { history, viewport: this.#paintHoverBand(mutable, spans) };
+		this.#lastViewportRows = mutable;
+		if (
+			this.#selection !== undefined &&
+			this.#pinnedSelectionText !== undefined &&
+			selectionText(mutable, this.#selection) !== this.#pinnedSelectionText
+		) {
+			this.#selection = undefined;
+			this.#pinnedSelectionText = undefined;
+		}
+		const painted = this.#paintHoverBand(mutable, spans);
+		return {
+			history,
+			viewport: this.#selection === undefined ? painted : highlightSelection(painted, this.#selection),
+		};
 	}
 
 	/**
@@ -684,6 +708,32 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 	 */
 	setHoveredClickId(id: string | undefined): void {
 		this.#hoveredClickId = id;
+	}
+
+	/**
+	 * Highlight a drag selection over the mutable viewport (or clear it with `undefined`). Takes
+	 * effect on the next frame; only the viewport copy is painted, so retirement still reads
+	 * unhighlighted component rows.
+	 */
+	setViewportSelection(selection: ViewportSelection | undefined): void {
+		this.#selection = selection;
+		this.#pinnedSelectionText = undefined;
+	}
+
+	/** Pin the current selection to the text it reads now; see {@link #pinnedSelectionText}. */
+	pinViewportSelection(): void {
+		this.#pinnedSelectionText =
+			this.#selection === undefined ? undefined : selectionText(this.#lastViewportRows, this.#selection);
+	}
+
+	/** Whether a selection is currently highlighted. */
+	hasViewportSelection(): boolean {
+		return this.#selection !== undefined;
+	}
+
+	/** Text under the current selection, read from the rows of the last frame. Empty when there is none. */
+	viewportSelectionText(): string {
+		return this.#selection === undefined ? "" : selectionText(this.#lastViewportRows, this.#selection);
 	}
 
 	/** Acknowledges one accepted header, replay, or transcript batch. */

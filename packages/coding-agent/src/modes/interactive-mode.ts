@@ -1784,6 +1784,36 @@ export class InteractiveMode implements InteractiveModeContext {
 		return this.composer.dispatchViewportMouse({ ...event, row: local });
 	}
 
+	setScreenSelection(
+		range: { anchor: { row: number; col: number }; head: { row: number; col: number } } | undefined,
+	): void {
+		const viewport = this.ui.getMutableViewport();
+		if (range === undefined || viewport.length === 0) {
+			this.composer.setViewportSelection(undefined);
+			return;
+		}
+		// A pointer dragged above or below the viewport extends the selection to its first or last row.
+		const toLocal = (cell: { row: number; col: number }) => {
+			const row = cell.row - viewport.top;
+			if (row < 0) return { row: 0, col: 0 };
+			if (row >= viewport.length) return { row: viewport.length - 1, col: Number.MAX_SAFE_INTEGER };
+			return { row, col: Math.max(0, cell.col) };
+		};
+		this.composer.setViewportSelection({ anchor: toLocal(range.anchor), head: toLocal(range.head) });
+	}
+
+	hasViewportSelection(): boolean {
+		return this.composer.hasViewportSelection();
+	}
+
+	viewportSelectionText(): string {
+		return this.composer.viewportSelectionText();
+	}
+
+	pinViewportSelection(): void {
+		this.composer.pinViewportSelection();
+	}
+
 	/** Flip the pinned jump list between its collapsed few and the full list, overriding the setting. */
 	togglePinnedHudExpanded(): void {
 		const mode = cfgDisplayPinnedAgents.get(settings);

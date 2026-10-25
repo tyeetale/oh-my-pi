@@ -176,6 +176,19 @@ export interface InteractiveModeContext {
 	/** Candidate subagent ids under a mutable-viewport line, for click-to-focus. Empty when the line has no target. */
 	resolveViewportClickCandidates(index: number): string[];
 	dispatchViewportMouse(event: SgrMouseEvent): "none" | "delivered" | "consumed";
+	/**
+	 * Highlight a drag selection between two screen cells, clamped to the mutable viewport, or
+	 * clear it with `undefined`. Only rows still in the viewport can be selected.
+	 */
+	setScreenSelection(
+		range: { anchor: { row: number; col: number }; head: { row: number; col: number } } | undefined,
+	): void;
+	/** Whether a drag selection is currently highlighted. */
+	hasViewportSelection(): boolean;
+	/** Text under the highlighted selection (ANSI stripped), or "" when there is none. */
+	viewportSelectionText(): string;
+	/** Keep the highlight only while the rows under it still read as they did when the drag ended. */
+	pinViewportSelection(): void;
 	/** Flip the pinned jump list between its collapsed few and the full list. */
 	togglePinnedHudExpanded(): void;
 	/** Point the inline hover band at a click-candidate id (or clear it). */
