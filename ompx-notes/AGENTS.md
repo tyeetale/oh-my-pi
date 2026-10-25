@@ -66,6 +66,9 @@ Each worktree is a flat directory at the root. Run code, tests, and builds only 
 |---|---|---|
 | Component mouse routing | upstream PR #15370 (johnnyshields), merged locally with one conflict resolved in `packages/tui/src/chrome/transcript-container.ts`: keep `main`'s `MeasuredBlock` map and the PR's `#frameRowOffsets` | Open, conflicting upstream when merged |
 | Click in the prompt moves the caret | branch `composer-click-to-caret` (`Editor.handleMouse`) | Not yet a PR; waiting on maintainers (Discord) |
+| Click acts on release; drag highlights and copies viewport text | branch `mouse-select` (`packages/tui/src/text-selection.ts`, composer selection painting, input-controller gesture state). Built on #15370's routing and `composer-click-to-caret`. | ompx only; not a PR. Selects only rows still in the mutable viewport, not text already in terminal scrollback. The highlight is pinned to the copied text and drops itself if the rows under it change. |
+
+Setup facts for ompx: `tui.mouse` is NOT in the shared `config.yml`; the launcher loads `dotfiles/ai/omp/ompx-overlay.yml` through `PI_CONFIG_FILES`, so stock `omp` keeps official behavior. The launcher uses `exec -a omp bun ...` because herdr identifies agents by process name and ignores a bun process's script path. Sessions started before either change must be restarted to pick it up.
 
 Related upstream PRs, for awareness: #8782 (older click-to-caret plus drag-select), #10584 (Option-click caret). Both open and conflicting.
 `proto-standalone-click` and `pr-15370` are local reference refs only.
